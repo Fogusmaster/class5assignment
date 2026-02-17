@@ -17,7 +17,7 @@ from sklearn.tree import DecisionTreeClassifier
 VALIDATION_SIZE = 0.2
 TARGET_COLUMN = "ProdTaken"
 
-TRAIN_DATA_PATH = "data/ass5train.csv"
+TRAIN_DATA_PATH = "data/train.csv"
 
 OUTPUT_DIR = "output_ass5"
 MODEL_PATH = os.path.join(OUTPUT_DIR, "ass5_model.pkl")
@@ -216,8 +216,8 @@ def main():
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-    with open(MODEL_PATH, "wb") as model_file:
-        pickle.dump(final_pipeline, model_file)
+    # with open(MODEL_PATH, "wb") as model_file:
+    #     pickle.dump(final_pipeline, model_file)
     with open(THRESHOLD_PATH, "w") as threshold_file:
         json.dump({"threshold": best_threshold,
                   "source": "validation_split_train_only"}, threshold_file, indent=2)

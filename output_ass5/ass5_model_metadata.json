@@ -10,30 +10,30 @@
     "random_forest",
     "extra_trees"
   ],
-  "train_rows_total": 1114,
-  "train_rows_for_split_train": 891,
-  "train_rows_for_split_validation": 223,
-  "train_rows_used_for_final_fit": 1114,
+  "train_rows_total": 2566,
+  "train_rows_for_split_train": 2052,
+  "train_rows_for_split_validation": 514,
+  "train_rows_used_for_final_fit": 2566,
   "test_data_used_for_model_selection": false,
   "test_data_used_for_threshold_tuning": false,
   "test_data_used_for_final_fit": false,
-  "best_threshold": 0.48499999999999993,
+  "best_threshold": 0.4549999999999999,
   "validation_metrics": {
-    "accuracy": 0.9013452914798207,
-    "precision": 0.8869565217391304,
-    "recall": 0.918918918918919,
-    "f1": 0.9026548672566371,
+    "accuracy": 0.9085603112840467,
+    "precision": 0.8513513513513513,
+    "recall": 0.6363636363636364,
+    "f1": 0.7283236994219653,
     "confusion_matrix": [
       [
-        99,
-        13
+        404,
+        11
       ],
       [
-        9,
-        102
+        36,
+        63
       ]
     ],
-    "auc": 0.9520592020592021
+    "auc": 0.9266033832298894
   },
   "paths": {
     "model": "output_ass5/ass5_model.pkl",

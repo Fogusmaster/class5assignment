@@ -9,15 +9,18 @@ import seaborn as sns
 from sklearn.metrics import accuracy_score, confusion_matrix, f1_score, precision_score, recall_score, roc_auc_score
 
 
-DATA_PATH = "data/ass5test.csv"
+DATA_PATH = "data/test.csv"
 TARGET_COLUMN = "ProdTaken"
 OUTPUT_DIR = "output_ass5"
 MODEL_PATH = os.path.join(OUTPUT_DIR, "ass5_model.pkl")
 THRESHOLD_PATH = os.path.join(OUTPUT_DIR, "ass5_threshold.json")
 INFERENCE_OUTPUT_DIR = "output_ass5"
-PREDICTIONS_OUTPUT_PATH = os.path.join(INFERENCE_OUTPUT_DIR, "ass5_predictions.csv")
-METRICS_OUTPUT_PATH = os.path.join(INFERENCE_OUTPUT_DIR, "ass5_evaluation_metrics.txt")
-CONFUSION_MATRIX_OUTPUT_PATH = os.path.join(INFERENCE_OUTPUT_DIR, "ass5_confusion_matrix.jpg")
+PREDICTIONS_OUTPUT_PATH = os.path.join(
+    INFERENCE_OUTPUT_DIR, "ass5_predictions.csv")
+METRICS_OUTPUT_PATH = os.path.join(
+    INFERENCE_OUTPUT_DIR, "ass5_evaluation_metrics.txt")
+CONFUSION_MATRIX_OUTPUT_PATH = os.path.join(
+    INFERENCE_OUTPUT_DIR, "ass5_confusion_matrix.jpg")
 CONFUSION_MATRIX_NORMALIZED_OUTPUT_PATH = os.path.join(
     INFERENCE_OUTPUT_DIR, "ass5_confusion_matrix_normalized.jpg"
 )
@@ -28,7 +31,8 @@ def clean_dataframe(df):
     df.columns = [col.strip() for col in df.columns]
     object_cols = df.select_dtypes(include=["object"]).columns.tolist()
     for col in object_cols:
-        df[col] = df[col].astype(str).str.strip().str.replace(r"\s+", " ", regex=True)
+        df[col] = df[col].astype(str).str.strip(
+        ).str.replace(r"\s+", " ", regex=True)
 
     replacements = {
         "Gender": {"Fe Male": "Female"},
@@ -70,7 +74,8 @@ def split_inference_features(df, target_column):
         X = df.copy()
 
     if target_column in X.columns:
-        raise ValueError(f"Leakage guard failed: target column '{target_column}' is present in inference features.")
+        raise ValueError(
+            f"Leakage guard failed: target column '{target_column}' is present in inference features.")
     return X, y_true
 
 
@@ -168,7 +173,8 @@ if y_true is not None:
         yticklabels=[0, 1],
         cbar_kws={"label": "Count"},
     )
-    plt.title("Confusion Matrix - Ass5 Classification Model", fontsize=16, fontweight="bold")
+    plt.title("Confusion Matrix - Ass5 Classification Model",
+              fontsize=16, fontweight="bold")
     plt.ylabel("True Label", fontsize=12)
     plt.xlabel("Predicted Label", fontsize=12)
 
@@ -199,13 +205,16 @@ if y_true is not None:
         yticklabels=[0, 1],
         cbar_kws={"label": "Percentage"},
     )
-    plt.title("Normalized Confusion Matrix - Ass5 Classification Model", fontsize=16, fontweight="bold")
+    plt.title("Normalized Confusion Matrix - Ass5 Classification Model",
+              fontsize=16, fontweight="bold")
     plt.ylabel("True Label", fontsize=12)
     plt.xlabel("Predicted Label", fontsize=12)
 
     plt.tight_layout()
-    plt.savefig(CONFUSION_MATRIX_NORMALIZED_OUTPUT_PATH, dpi=300, bbox_inches="tight")
-    print(f"Normalized confusion matrix plot saved to: {CONFUSION_MATRIX_NORMALIZED_OUTPUT_PATH}")
+    plt.savefig(CONFUSION_MATRIX_NORMALIZED_OUTPUT_PATH,
+                dpi=300, bbox_inches="tight")
+    print(
+        f"Normalized confusion matrix plot saved to: {CONFUSION_MATRIX_NORMALIZED_OUTPUT_PATH}")
 else:
     print("\nNo ground-truth labels found. Skipping metrics and plots.")
 

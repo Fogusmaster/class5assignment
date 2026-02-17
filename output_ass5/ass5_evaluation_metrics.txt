@@ -2,13 +2,13 @@ ASS5 INFERENCE EVALUATION METRICS
 ========================================
 
 Threshold source: saved training artifact
-Threshold used: 0.485000
-Accuracy: 0.862903
-AUC: 0.924168
-Precision: 0.835821
-Recall: 0.903226
-F1: 0.868217
+Threshold used: 0.455000
+Accuracy: 0.931464
+AUC: 0.953473
+Precision: 0.900000
+Recall: 0.725806
+F1: 0.803571
 
 Confusion Matrix:
-51 11
-6 56
+508 10
+34 90
