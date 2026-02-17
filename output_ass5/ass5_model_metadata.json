@@ -1,0 +1,44 @@
+{
+  "random_seed": null,
+  "target_column": "ProdTaken",
+  "split_strategy": "single_train_validation_split",
+  "validation_size": 0.2,
+  "threshold_source": "validation_split_train_only",
+  "selected_model": "extra_trees",
+  "candidate_models": [
+    "decision_tree",
+    "random_forest",
+    "extra_trees"
+  ],
+  "train_rows_total": 1114,
+  "train_rows_for_split_train": 891,
+  "train_rows_for_split_validation": 223,
+  "train_rows_used_for_final_fit": 1114,
+  "test_data_used_for_model_selection": false,
+  "test_data_used_for_threshold_tuning": false,
+  "test_data_used_for_final_fit": false,
+  "best_threshold": 0.48499999999999993,
+  "validation_metrics": {
+    "accuracy": 0.9013452914798207,
+    "precision": 0.8869565217391304,
+    "recall": 0.918918918918919,
+    "f1": 0.9026548672566371,
+    "confusion_matrix": [
+      [
+        99,
+        13
+      ],
+      [
+        9,
+        102
+      ]
+    ],
+    "auc": 0.9520592020592021
+  },
+  "paths": {
+    "model": "output_ass5/ass5_model.pkl",
+    "threshold": "output_ass5/ass5_threshold.json",
+    "metadata": "output_ass5/ass5_model_metadata.json",
+    "validation_metrics": "output_ass5/ass5_validation_metrics.txt"
+  }
+}
