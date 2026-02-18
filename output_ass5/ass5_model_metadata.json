@@ -1,44 +1,52 @@
 {
-  "random_seed": null,
+  "random_seed": 42,
+  "train_data_path": "data/train.csv",
   "target_column": "ProdTaken",
-  "split_strategy": "single_train_validation_split",
-  "validation_size": 0.2,
-  "threshold_source": "validation_split_train_only",
-  "selected_model": "extra_trees",
-  "candidate_models": [
-    "decision_tree",
-    "random_forest",
-    "extra_trees"
+  "target_labels": [
+    "0",
+    "1"
   ],
-  "train_rows_total": 2566,
-  "train_rows_for_split_train": 2052,
-  "train_rows_for_split_validation": 514,
-  "train_rows_used_for_final_fit": 2566,
-  "test_data_used_for_model_selection": false,
-  "test_data_used_for_threshold_tuning": false,
-  "test_data_used_for_final_fit": false,
-  "best_threshold": 0.4549999999999999,
+  "positive_label": "1",
+  "validation_size": 0.2,
+  "epochs": 100,
+  "batch_size": 32,
+  "learning_rate": 0.001,
+  "architecture": [
+    512,
+    256,
+    128,
+    64,
+    32
+  ],
+  "loss": "binary_crossentropy",
+  "optimizer": "Adam",
+  "metrics": [
+    "accuracy",
+    "auc"
+  ],
+  "threshold": 0.5,
   "validation_metrics": {
-    "accuracy": 0.9085603112840467,
-    "precision": 0.8513513513513513,
-    "recall": 0.6363636363636364,
-    "f1": 0.7283236994219653,
+    "accuracy": 0.8910505836575876,
+    "precision": 0.6902654867256637,
+    "recall": 0.7878787878787878,
+    "f1": 0.7358490566037735,
     "confusion_matrix": [
       [
-        404,
-        11
+        380,
+        35
       ],
       [
-        36,
-        63
+        21,
+        78
       ]
     ],
-    "auc": 0.9266033832298894
+    "auc": 0.9263356456127542
   },
   "paths": {
-    "model": "output_ass5/ass5_model.pkl",
+    "best_model": "output_ass5/ass5_best_model.keras",
+    "artifacts": "output_ass5/ass5_artifacts.pkl",
     "threshold": "output_ass5/ass5_threshold.json",
-    "metadata": "output_ass5/ass5_model_metadata.json",
-    "validation_metrics": "output_ass5/ass5_validation_metrics.txt"
+    "validation_metrics": "output_ass5/ass5_validation_metrics.txt",
+    "training_history": "output_ass5/ass5_training_history.png"
   }
 }

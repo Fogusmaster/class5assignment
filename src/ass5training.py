@@ -1,94 +1,162 @@
+from tensorflow.keras import callbacks, layers, models, regularizers
+from sklearn.utils import class_weight
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
+from sklearn.pipeline import Pipeline
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score, confusion_matrix, f1_score, precision_score, recall_score, roc_auc_score
+from sklearn.impute import SimpleImputer
+from sklearn.compose import ColumnTransformer
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib
 import json
 import os
 import pickle
-import numpy as np
-import pandas as pd
-from sklearn.base import clone
-from sklearn.compose import ColumnTransformer
-from sklearn.ensemble import ExtraTreesClassifier, RandomForestClassifier
-from sklearn.impute import SimpleImputer
-from sklearn.metrics import accuracy_score, confusion_matrix, f1_score, precision_score, recall_score, roc_auc_score
-from sklearn.model_selection import train_test_split
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import OneHotEncoder
-from sklearn.tree import DecisionTreeClassifier
+
+os.environ.setdefault("MPLCONFIGDIR", os.path.join(
+    "output_ass5", ".mplconfig"))
+matplotlib.use("Agg")
+
+try:
+    import tensorflow as tf
+except ModuleNotFoundError as exc:
+    raise ModuleNotFoundError(
+        "tensorflow is required. Install dependencies with: pip install -r requirements.txt"
+    ) from exc
 
 
-VALIDATION_SIZE = 0.2
+RANDOM_SEED = 42
 TARGET_COLUMN = "ProdTaken"
+VALIDATION_SIZE = 0.2
+EPOCHS = 100
+BATCH_SIZE = 32
+LEARNING_RATE = 1e-3
 
 TRAIN_DATA_PATH = "data/train.csv"
-
 OUTPUT_DIR = "output_ass5"
-MODEL_PATH = os.path.join(OUTPUT_DIR, "ass5_model.pkl")
+BEST_MODEL_PATH = os.path.join(OUTPUT_DIR, "ass5_best_model.keras")
+ARTIFACTS_PATH = os.path.join(OUTPUT_DIR, "ass5_artifacts.pkl")
 THRESHOLD_PATH = os.path.join(OUTPUT_DIR, "ass5_threshold.json")
 METADATA_PATH = os.path.join(OUTPUT_DIR, "ass5_model_metadata.json")
 VALIDATION_METRICS_PATH = os.path.join(
     OUTPUT_DIR, "ass5_validation_metrics.txt")
+TRAINING_HISTORY_PLOT_PATH = os.path.join(
+    OUTPUT_DIR, "ass5_training_history.png")
 
 
-def clean_dataframe(df):
+REPLACEMENTS = {
+    "Gender": {"Fe Male": "Female"},
+    "Occupation": {"Free Lancer": "Freelancer"},
+    "MaritalStatus": {"Unmarried": "Single"},
+}
+
+
+def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df.columns = [col.strip() for col in df.columns]
+
     object_cols = df.select_dtypes(include=["object"]).columns.tolist()
     for col in object_cols:
         df[col] = df[col].astype(str).str.strip(
         ).str.replace(r"\s+", " ", regex=True)
 
-    replacements = {
-        "Gender": {"Fe Male": "Female"},
-        "Occupation": {"Free Lancer": "Freelancer"},
-        "MaritalStatus": {"Unmarried": "Single"},
-    }
-    for col, mapping in replacements.items():
+    for col, mapping in REPLACEMENTS.items():
         if col in df.columns:
             df[col] = df[col].replace(mapping)
+
     return df
 
 
-def split_features_target(df, target_column):
-    if target_column not in df.columns:
-        raise ValueError(f"Target column '{target_column}' not found.")
-
-    X = df.drop(columns=[target_column]).copy()
-    if target_column in X.columns:
+def encode_binary_target(y_series: pd.Series):
+    y_str = y_series.astype(str).str.strip()
+    unique_values = sorted(y_str.unique().tolist())
+    if len(unique_values) != 2:
         raise ValueError(
-            "Leakage guard failed: target column is present in feature matrix.")
-    y = df[target_column].astype(int).copy()
-    return X, y
+            f"Target must be binary, found values: {unique_values}")
+
+    lowered = [v.lower() for v in unique_values]
+    if "yes" in lowered:
+        positive_label = unique_values[lowered.index("yes")]
+    elif "1" in lowered:
+        positive_label = unique_values[lowered.index("1")]
+    else:
+        positive_label = unique_values[1]
+
+    y_binary = (y_str == positive_label).astype(np.int32)
+    return y_binary, unique_values, positive_label
 
 
-def build_preprocessor(X):
-    numeric_cols = X.select_dtypes(include=["number"]).columns.tolist()
-    categorical_cols = [col for col in X.columns if col not in numeric_cols]
+def get_preprocessor(X: pd.DataFrame) -> ColumnTransformer:
+    categorical_cols = X.select_dtypes(
+        include=["object", "category"]).columns.tolist()
+    numerical_cols = X.select_dtypes(
+        include=["number", "bool"]).columns.tolist()
 
-    numeric_pipeline = Pipeline(
-        [("imputer", SimpleImputer(strategy="median"))])
-    categorical_pipeline = Pipeline([
-        ("imputer", SimpleImputer(strategy="most_frequent")),
-        ("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=True)),
-    ])
+    num_pipeline = Pipeline(
+        [
+            ("imputer", SimpleImputer(strategy="median")),
+            ("scaler", StandardScaler()),
+        ]
+    )
 
-    return ColumnTransformer([
-        ("num", numeric_pipeline, numeric_cols),
-        ("cat", categorical_pipeline, categorical_cols),
-    ])
+    cat_pipeline = Pipeline(
+        [
+            ("imputer", SimpleImputer(strategy="most_frequent")),
+            (
+                "encoder",
+                OneHotEncoder(handle_unknown="ignore", sparse_output=False),
+            ),
+        ]
+    )
+
+    preprocessor = ColumnTransformer(
+        [
+            ("num", num_pipeline, numerical_cols),
+            ("cat", cat_pipeline, categorical_cols),
+        ]
+    )
+    return preprocessor
 
 
-def find_best_threshold(y_true, y_prob):
-    thresholds = np.linspace(0.05, 0.95, 181)
-    best_threshold = 0.5
-    best_accuracy = -1.0
-    for threshold in thresholds:
-        y_pred = (y_prob >= threshold).astype(int)
-        acc = accuracy_score(y_true, y_pred)
-        if acc > best_accuracy:
-            best_accuracy = acc
-            best_threshold = float(threshold)
-    return best_threshold, best_accuracy
+def build_model(input_dim: int) -> tf.keras.Model:
+    model = models.Sequential(
+        [
+            layers.Input(shape=(input_dim,)),
+            layers.Dense(512, activation="relu",
+                         kernel_regularizer=regularizers.l2(0.001)),
+            layers.BatchNormalization(),
+            layers.Dropout(0.3),
+            layers.Dense(256, activation="relu",
+                         kernel_regularizer=regularizers.l2(0.001)),
+            layers.BatchNormalization(),
+            layers.Dropout(0.2),
+            layers.Dense(128, activation="relu",
+                         kernel_regularizer=regularizers.l2(0.001)),
+            layers.BatchNormalization(),
+            layers.Dropout(0.2),
+            layers.Dense(64, activation="relu",
+                         kernel_regularizer=regularizers.l2(0.001)),
+            layers.BatchNormalization(),
+            layers.Dropout(0.2),
+            layers.Dense(32, activation="relu",
+                         kernel_regularizer=regularizers.l2(0.001)),
+            layers.BatchNormalization(),
+            layers.Dropout(0.2),
+            layers.Dense(1, activation="sigmoid"),
+        ]
+    )
+
+    model.compile(
+        optimizer=tf.keras.optimizers.Adam(learning_rate=LEARNING_RATE),
+        loss="binary_crossentropy",
+        metrics=["accuracy", tf.keras.metrics.AUC(name="auc")],
+    )
+    return model
 
 
-def compute_metrics(y_true, y_pred, y_prob):
+def compute_metrics(y_true: np.ndarray, y_prob: np.ndarray, threshold: float):
+    y_pred = (y_prob >= threshold).astype(int)
     metrics = {
         "accuracy": float(accuracy_score(y_true, y_pred)),
         "precision": float(precision_score(y_true, y_pred, zero_division=0)),
@@ -103,7 +171,7 @@ def compute_metrics(y_true, y_pred, y_prob):
     return metrics
 
 
-def format_metrics_text(title, threshold, metrics):
+def save_metrics_text(path: str, title: str, threshold: float, metrics: dict):
     auc_text = "Could not calculate" if metrics[
         "auc"] is None else f"{metrics['auc']:.6f}"
     lines = [
@@ -120,146 +188,170 @@ def format_metrics_text(title, threshold, metrics):
         "Confusion Matrix:",
     ]
     for row in metrics["confusion_matrix"]:
-        lines.append(" ".join(str(value) for value in row))
+        lines.append(" ".join(str(v) for v in row))
     lines.append("")
-    return "\n".join(lines)
+
+    with open(path, "w") as f:
+        f.write("\n".join(lines))
 
 
-def save_metrics_text(path, title, threshold, metrics):
-    with open(path, "w") as metrics_file:
-        metrics_file.write(format_metrics_text(title, threshold, metrics))
+def save_training_history_plot(history, path: str):
+    plt.figure(figsize=(15, 5))
+
+    plt.subplot(1, 2, 1)
+    plt.plot(history.history["accuracy"], label="Train Acc")
+    plt.plot(history.history["val_accuracy"], label="Val Acc")
+    plt.legend()
+    plt.title("Accuracy")
+
+    plt.subplot(1, 2, 2)
+    plt.plot(history.history["loss"], label="Train Loss")
+    plt.plot(history.history["val_loss"], label="Val Loss")
+    plt.legend()
+    plt.title("Loss")
+
+    plt.tight_layout()
+    plt.savefig(path, dpi=200)
+    plt.close()
 
 
 def main():
-    print("Loading training data...")
-    train_df = clean_dataframe(pd.read_csv(TRAIN_DATA_PATH))
-    if TARGET_COLUMN not in train_df.columns:
-        raise ValueError(
-            f"Target column '{TARGET_COLUMN}' not found in training data.")
-    train_df = train_df.dropna(subset=[TARGET_COLUMN]).copy()
-    train_df[TARGET_COLUMN] = train_df[TARGET_COLUMN].astype(int)
-    print(f"Training dataset shape: {train_df.shape}")
-    print(
-        f"\nTraining target distribution:\n{train_df[TARGET_COLUMN].value_counts().sort_index()}")
-
-    X_full_train, y_full_train = split_features_target(train_df, TARGET_COLUMN)
-    X_train, X_val, y_train, y_val = train_test_split(
-        X_full_train,
-        y_full_train,
-        test_size=VALIDATION_SIZE,
-        stratify=y_full_train,
-    )
-
-    candidate_models = {
-        "decision_tree": DecisionTreeClassifier(
-            class_weight="balanced",
-        ),
-        "random_forest": RandomForestClassifier(
-            n_estimators=800,
-            n_jobs=1,
-            class_weight="balanced_subsample",
-            max_features="sqrt",
-        ),
-        "extra_trees": ExtraTreesClassifier(
-            n_estimators=800,
-            n_jobs=1,
-            class_weight="balanced_subsample",
-            max_features="sqrt",
-        ),
-    }
-
-    print("\nRunning model selection on training split only...")
-    model_results = {}
-
-    for model_name, estimator in candidate_models.items():
-        pipeline = Pipeline([
-            ("preprocessor", build_preprocessor(X_train)),
-            ("model", clone(estimator)),
-        ])
-        pipeline.fit(X_train, y_train)
-
-        val_prob = pipeline.predict_proba(X_val)[:, 1]
-        threshold, _ = find_best_threshold(y_val, val_prob)
-        val_pred = (val_prob >= threshold).astype(int)
-        val_metrics = compute_metrics(y_val, val_pred, val_prob)
-
-        model_results[model_name] = {
-            "threshold": float(threshold),
-            "validation_metrics": val_metrics,
-        }
-        auc_text = "N/A" if val_metrics["auc"] is None else f"{val_metrics['auc']:.4f}"
-        print(
-            f"{model_name}: "
-            f"val_accuracy={val_metrics['accuracy']:.4f}, "
-            f"val_auc={auc_text}, "
-            f"threshold={threshold:.3f}"
-        )
-
-    best_model_name = max(
-        model_results,
-        key=lambda name: (
-            model_results[name]["validation_metrics"]["accuracy"],
-            -1.0 if model_results[name]["validation_metrics"]["auc"] is None else model_results[name]["validation_metrics"]["auc"],
-        ),
-    )
-    best_threshold = float(model_results[best_model_name]["threshold"])
-    validation_metrics = model_results[best_model_name]["validation_metrics"]
-    print(f"\nSelected model: {best_model_name}")
-    print(f"Validation threshold source: train/validation split only")
-
-    final_pipeline = Pipeline([
-        ("preprocessor", build_preprocessor(X_full_train)),
-        ("model", clone(candidate_models[best_model_name])),
-    ])
-    final_pipeline.fit(X_full_train, y_full_train)
-    print("Final model fitted on full training data only.")
-
+    np.random.seed(RANDOM_SEED)
+    tf.random.set_seed(RANDOM_SEED)
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-    # with open(MODEL_PATH, "wb") as model_file:
-    #     pickle.dump(final_pipeline, model_file)
-    with open(THRESHOLD_PATH, "w") as threshold_file:
-        json.dump({"threshold": best_threshold,
-                  "source": "validation_split_train_only"}, threshold_file, indent=2)
+    print("Loading and cleaning training data...")
+    df = clean_dataframe(pd.read_csv(TRAIN_DATA_PATH))
+
+    if TARGET_COLUMN not in df.columns:
+        raise ValueError(
+            f"Target column '{TARGET_COLUMN}' not found in training data")
+
+    df = df.dropna(subset=[TARGET_COLUMN]).copy()
+
+    X = df.drop(columns=[TARGET_COLUMN])
+    y, target_labels, positive_label = encode_binary_target(df[TARGET_COLUMN])
+
+    X_train, X_val, y_train, y_val = train_test_split(
+        X,
+        y,
+        test_size=VALIDATION_SIZE,
+        random_state=RANDOM_SEED,
+        stratify=y,
+    )
+
+    print("Fitting preprocessor...")
+    preprocessor = get_preprocessor(X_train)
+    X_train_processed = preprocessor.fit_transform(X_train)
+    X_val_processed = preprocessor.transform(X_val)
+
+    class_weights_vals = class_weight.compute_class_weight(
+        class_weight="balanced",
+        classes=np.unique(y_train),
+        y=y_train,
+    )
+    class_weights_dict = {
+        int(cls): float(weight)
+        for cls, weight in zip(np.unique(y_train), class_weights_vals)
+    }
+    print(f"Class weights: {class_weights_dict}")
+
+    model = build_model(X_train_processed.shape[1])
+
+    callbacks_list = [
+        callbacks.ModelCheckpoint(
+            BEST_MODEL_PATH,
+            monitor="val_auc",
+            save_best_only=True,
+            mode="max",
+            verbose=1,
+        ),
+        callbacks.EarlyStopping(
+            monitor="val_loss",
+            patience=15,
+            restore_best_weights=True,
+            verbose=1,
+        ),
+        callbacks.ReduceLROnPlateau(
+            monitor="val_loss",
+            factor=0.5,
+            patience=5,
+            verbose=1,
+        ),
+    ]
+
+    print("Training model...")
+    history = model.fit(
+        X_train_processed,
+        y_train,
+        validation_data=(X_val_processed, y_val),
+        epochs=EPOCHS,
+        batch_size=BATCH_SIZE,
+        callbacks=callbacks_list,
+        class_weight=class_weights_dict,
+        verbose=1,
+    )
+
+    threshold = 0.5
+    y_val_prob = model.predict(X_val_processed, verbose=0).ravel()
+    val_metrics = compute_metrics(y_val, y_val_prob, threshold)
+
+    artifacts = {
+        "preprocessor": preprocessor,
+        "target_column": TARGET_COLUMN,
+        "target_labels": target_labels,
+        "positive_label": positive_label,
+        "positive_index": 1,
+    }
+    with open(ARTIFACTS_PATH, "wb") as f:
+        pickle.dump(artifacts, f)
+
+    with open(THRESHOLD_PATH, "w") as f:
+        json.dump({"threshold": threshold,
+                  "source": "fixed_default"}, f, indent=2)
 
     save_metrics_text(
         VALIDATION_METRICS_PATH,
-        "ASS5 VALIDATION METRICS (TUNING DATA ONLY)",
-        best_threshold,
-        validation_metrics,
+        "ASS5 VALIDATION METRICS",
+        threshold,
+        val_metrics,
     )
+    save_training_history_plot(history, TRAINING_HISTORY_PLOT_PATH)
 
     metadata = {
-        "random_seed": None,
+        "random_seed": RANDOM_SEED,
+        "train_data_path": TRAIN_DATA_PATH,
         "target_column": TARGET_COLUMN,
-        "split_strategy": "single_train_validation_split",
+        "target_labels": target_labels,
+        "positive_label": positive_label,
         "validation_size": VALIDATION_SIZE,
-        "threshold_source": "validation_split_train_only",
-        "selected_model": best_model_name,
-        "candidate_models": list(candidate_models.keys()),
-        "train_rows_total": int(train_df.shape[0]),
-        "train_rows_for_split_train": int(X_train.shape[0]),
-        "train_rows_for_split_validation": int(X_val.shape[0]),
-        "train_rows_used_for_final_fit": int(X_full_train.shape[0]),
-        "test_data_used_for_model_selection": False,
-        "test_data_used_for_threshold_tuning": False,
-        "test_data_used_for_final_fit": False,
-        "best_threshold": best_threshold,
-        "validation_metrics": validation_metrics,
+        "epochs": EPOCHS,
+        "batch_size": BATCH_SIZE,
+        "learning_rate": LEARNING_RATE,
+        "architecture": [512, 256, 128, 64, 32],
+        "loss": "binary_crossentropy",
+        "optimizer": "Adam",
+        "metrics": ["accuracy", "auc"],
+        "threshold": threshold,
+        "validation_metrics": val_metrics,
         "paths": {
-            "model": MODEL_PATH,
+            "best_model": BEST_MODEL_PATH,
+            "artifacts": ARTIFACTS_PATH,
             "threshold": THRESHOLD_PATH,
-            "metadata": METADATA_PATH,
             "validation_metrics": VALIDATION_METRICS_PATH,
+            "training_history": TRAINING_HISTORY_PLOT_PATH,
         },
     }
-    with open(METADATA_PATH, "w") as metadata_file:
-        json.dump(metadata, metadata_file, indent=2)
 
-    print(f"\nModel saved to {MODEL_PATH}")
-    print(f"Threshold saved to {THRESHOLD_PATH}")
-    print(f"Metadata saved to {METADATA_PATH}")
-    print(f"Validation metrics saved to {VALIDATION_METRICS_PATH}")
+    with open(METADATA_PATH, "w") as f:
+        json.dump(metadata, f, indent=2)
+
+    print("Training complete.")
+    print(f"Model saved to: {BEST_MODEL_PATH}")
+    print(f"Artifacts saved to: {ARTIFACTS_PATH}")
+    print(f"Threshold saved to: {THRESHOLD_PATH}")
+    print(f"Validation metrics saved to: {VALIDATION_METRICS_PATH}")
+    print(f"Training history plot saved to: {TRAINING_HISTORY_PLOT_PATH}")
 
 
 if __name__ == "__main__":

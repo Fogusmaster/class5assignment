@@ -1,85 +1,79 @@
+from sklearn.metrics import accuracy_score, confusion_matrix, f1_score, precision_score, recall_score, roc_auc_score
+import seaborn as sns
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib
 import json
 import os
 import pickle
 
-import matplotlib.pyplot as plt
-import numpy as np
-import pandas as pd
-import seaborn as sns
-from sklearn.metrics import accuracy_score, confusion_matrix, f1_score, precision_score, recall_score, roc_auc_score
+os.environ.setdefault("MPLCONFIGDIR", os.path.join(
+    "output_ass5", ".mplconfig"))
+matplotlib.use("Agg")
+
+try:
+    import tensorflow as tf
+except ModuleNotFoundError as exc:
+    raise ModuleNotFoundError(
+        "tensorflow is required. Install dependencies with: pip install -r requirements.txt"
+    ) from exc
 
 
 DATA_PATH = "data/test.csv"
-TARGET_COLUMN = "ProdTaken"
 OUTPUT_DIR = "output_ass5"
-MODEL_PATH = os.path.join(OUTPUT_DIR, "ass5_model.pkl")
+BEST_MODEL_PATH = os.path.join(OUTPUT_DIR, "ass5_best_model.keras")
+ARTIFACTS_PATH = os.path.join(OUTPUT_DIR, "ass5_artifacts.pkl")
 THRESHOLD_PATH = os.path.join(OUTPUT_DIR, "ass5_threshold.json")
-INFERENCE_OUTPUT_DIR = "output_ass5"
-PREDICTIONS_OUTPUT_PATH = os.path.join(
-    INFERENCE_OUTPUT_DIR, "ass5_predictions.csv")
-METRICS_OUTPUT_PATH = os.path.join(
-    INFERENCE_OUTPUT_DIR, "ass5_evaluation_metrics.txt")
+
+PREDICTIONS_OUTPUT_PATH = os.path.join(OUTPUT_DIR, "ass5_predictions.csv")
+METRICS_OUTPUT_PATH = os.path.join(OUTPUT_DIR, "ass5_evaluation_metrics.txt")
 CONFUSION_MATRIX_OUTPUT_PATH = os.path.join(
-    INFERENCE_OUTPUT_DIR, "ass5_confusion_matrix.jpg")
+    OUTPUT_DIR, "ass5_confusion_matrix.jpg")
 CONFUSION_MATRIX_NORMALIZED_OUTPUT_PATH = os.path.join(
-    INFERENCE_OUTPUT_DIR, "ass5_confusion_matrix_normalized.jpg"
+    OUTPUT_DIR, "ass5_confusion_matrix_normalized.jpg"
 )
 
+REPLACEMENTS = {
+    "Gender": {"Fe Male": "Female"},
+    "Occupation": {"Free Lancer": "Freelancer"},
+    "MaritalStatus": {"Unmarried": "Single"},
+}
 
-def clean_dataframe(df):
+
+def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df.columns = [col.strip() for col in df.columns]
+
     object_cols = df.select_dtypes(include=["object"]).columns.tolist()
     for col in object_cols:
         df[col] = df[col].astype(str).str.strip(
         ).str.replace(r"\s+", " ", regex=True)
 
-    replacements = {
-        "Gender": {"Fe Male": "Female"},
-        "Occupation": {"Free Lancer": "Freelancer"},
-        "MaritalStatus": {"Unmarried": "Single"},
-    }
-    for col, mapping in replacements.items():
+    for col, mapping in REPLACEMENTS.items():
         if col in df.columns:
             df[col] = df[col].replace(mapping)
-    return df
-
-
-def fill_missing_values(df, target_column):
-    df = df.copy()
-    if target_column in df.columns:
-        df = df.dropna(subset=[target_column])
-    numeric_cols = df.select_dtypes(include=["number"]).columns.tolist()
-    categorical_cols = df.select_dtypes(include=["object"]).columns.tolist()
-
-    for col in numeric_cols:
-        if col == target_column:
-            continue
-        df[col] = df[col].fillna(df[col].median())
-
-    for col in categorical_cols:
-        if col == target_column:
-            continue
-        df[col] = df[col].fillna(df[col].mode().iloc[0])
 
     return df
 
 
-def split_inference_features(df, target_column):
+def split_inference_features(df: pd.DataFrame, target_column: str):
     if target_column in df.columns:
-        y_true = df[target_column].astype(int)
+        y_true = df[target_column].copy()
         X = df.drop(columns=[target_column]).copy()
     else:
         y_true = None
         X = df.copy()
-
-    if target_column in X.columns:
-        raise ValueError(
-            f"Leakage guard failed: target column '{target_column}' is present in inference features.")
     return X, y_true
 
 
-def compute_metrics(y_true, y_pred, y_prob):
+def encode_target_for_metrics(y_series: pd.Series, positive_label: str):
+    y_str = y_series.astype(str).str.strip()
+    return (y_str == str(positive_label)).astype(np.int32).values
+
+
+def compute_metrics(y_true: np.ndarray, y_prob: np.ndarray, threshold: float):
+    y_pred = (y_prob >= threshold).astype(int)
     metrics = {
         "accuracy": float(accuracy_score(y_true, y_pred)),
         "precision": float(precision_score(y_true, y_pred, zero_division=0)),
@@ -94,7 +88,7 @@ def compute_metrics(y_true, y_pred, y_prob):
     return metrics
 
 
-def save_metrics_text(path, threshold, metrics):
+def save_metrics_text(path: str, threshold: float, metrics: dict):
     with open(path, "w") as metrics_file:
         metrics_file.write("ASS5 INFERENCE EVALUATION METRICS\n")
         metrics_file.write("=" * 40 + "\n\n")
@@ -113,114 +107,123 @@ def save_metrics_text(path, threshold, metrics):
             metrics_file.write(" ".join(str(value) for value in row) + "\n")
 
 
-os.makedirs(INFERENCE_OUTPUT_DIR, exist_ok=True)
+def main():
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-print("Loading trained model and threshold artifacts...")
-with open(MODEL_PATH, "rb") as model_file:
-    model = pickle.load(model_file)
-with open(THRESHOLD_PATH, "r") as threshold_file:
-    threshold = float(json.load(threshold_file).get("threshold", 0.5))
-print("Model and threshold loaded successfully.")
+    print("Loading model and artifacts...")
+    model = tf.keras.models.load_model(BEST_MODEL_PATH)
+    with open(ARTIFACTS_PATH, "rb") as f:
+        artifacts = pickle.load(f)
+    with open(THRESHOLD_PATH, "r") as f:
+        threshold = float(json.load(f).get("threshold", 0.5))
 
-print("\nLoading inference data...")
-df = clean_dataframe(pd.read_csv(DATA_PATH))
-df = fill_missing_values(df, TARGET_COLUMN)
-print(f"Inference dataset shape: {df.shape}")
+    target_column = artifacts["target_column"]
+    positive_label = artifacts["positive_label"]
+    preprocessor = artifacts["preprocessor"]
 
-X, y_true = split_inference_features(df, TARGET_COLUMN)
-print("\nMaking predictions with saved threshold (no tuning)...")
-y_pred_proba = model.predict_proba(X)[:, 1]
-y_pred = (y_pred_proba >= threshold).astype(int)
+    print("Loading inference data...")
+    df = clean_dataframe(pd.read_csv(DATA_PATH))
+    X_raw, y_true_raw = split_inference_features(df, target_column)
 
-results_df = df.copy()
-results_df["predicted_label"] = y_pred
-results_df["prediction_probability"] = y_pred_proba
+    X_processed = preprocessor.transform(X_raw)
 
-if y_true is not None:
-    y_true_values = y_true.values
-    results_df["true_label"] = y_true_values
-    results_df["correct_prediction"] = results_df["true_label"] == results_df["predicted_label"]
+    print("Running inference...")
+    y_prob = model.predict(X_processed, verbose=0).ravel()
+    y_pred = (y_prob >= threshold).astype(int)
 
-print("\n" + "=" * 60)
-print("INFERENCE RESULTS")
-print("=" * 60)
+    results_df = df.copy()
+    results_df["predicted_label"] = y_pred
+    results_df["prediction_probability"] = y_prob
 
-if y_true is not None:
-    metrics = compute_metrics(y_true_values, y_pred, y_pred_proba)
-    print(f"\nThreshold used: {threshold:.6f}")
-    print(f"Accuracy: {metrics['accuracy']:.4f}")
-    if metrics["auc"] is None:
-        print("AUC Score: Could not calculate")
+    if y_true_raw is not None:
+        y_true = encode_target_for_metrics(y_true_raw, positive_label)
+        results_df["true_label"] = y_true
+        results_df["correct_prediction"] = (
+            results_df["true_label"] == results_df["predicted_label"])
+
+        metrics = compute_metrics(y_true, y_prob, threshold)
+
+        save_metrics_text(METRICS_OUTPUT_PATH, threshold, metrics)
+
+        cm = metrics["confusion_matrix"]
+        tn, fp, fn, tp = cm.ravel()
+        accuracy = metrics["accuracy"]
+
+        fig, ax = plt.subplots(figsize=(10, 8))
+        sns.heatmap(
+            cm,
+            annot=True,
+            fmt="d",
+            cmap="Blues",
+            xticklabels=[0, 1],
+            yticklabels=[0, 1],
+            cbar_kws={"label": "Count"},
+            ax=ax,
+        )
+        plt.title("Confusion Matrix - Ass5 Classification Model",
+                  fontsize=16, fontweight="bold")
+        plt.ylabel("True Label", fontsize=12)
+        plt.xlabel("Predicted Label", fontsize=12)
+
+        legend_text = (
+            f"True Negatives: {tn}\n"
+            f"False Positives: {fp}\n"
+            f"False Negatives: {fn}\n"
+            f"True Positives: {tp}\n\n"
+            f"Accuracy: {accuracy:.4f}"
+        )
+        props = dict(boxstyle="round", facecolor="wheat", alpha=0.5)
+        ax.text(
+            1.35, 0.95, legend_text,
+            transform=ax.transAxes,
+            fontsize=11,
+            verticalalignment="top",
+            bbox=props,
+        )
+
+        plt.tight_layout()
+        plt.savefig(CONFUSION_MATRIX_OUTPUT_PATH, dpi=300, bbox_inches="tight")
+        plt.close()
+
+        plt.figure(figsize=(10, 8))
+        row_sums = cm.sum(axis=1, keepdims=True)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            cm_normalized = np.divide(
+                cm.astype("float"), row_sums, where=row_sums != 0)
+        sns.heatmap(
+            cm_normalized,
+            annot=True,
+            fmt=".2%",
+            cmap="Greens",
+            xticklabels=[0, 1],
+            yticklabels=[0, 1],
+            cbar_kws={"label": "Percentage"},
+        )
+        plt.title("Normalized Confusion Matrix - Ass5 Classification Model",
+                  fontsize=16, fontweight="bold")
+        plt.ylabel("True Label", fontsize=12)
+        plt.xlabel("Predicted Label", fontsize=12)
+        plt.tight_layout()
+        plt.savefig(CONFUSION_MATRIX_NORMALIZED_OUTPUT_PATH,
+                    dpi=300, bbox_inches="tight")
+        plt.close()
+
+        print(f"Threshold used: {threshold:.6f}")
+        print(f"Accuracy: {metrics['accuracy']:.4f}")
+        print(f"Precision: {metrics['precision']:.4f}")
+        print(f"Recall: {metrics['recall']:.4f}")
+        print(f"F1: {metrics['f1']:.4f}")
+        if metrics["auc"] is None:
+            print("AUC: Could not calculate")
+        else:
+            print(f"AUC: {metrics['auc']:.4f}")
     else:
-        print(f"AUC Score: {metrics['auc']:.4f}")
-    print(f"Precision: {metrics['precision']:.4f}")
-    print(f"Recall: {metrics['recall']:.4f}")
-    print(f"F1: {metrics['f1']:.4f}")
-    print("\nConfusion Matrix:")
-    print(metrics["confusion_matrix"])
+        print(
+            "No ground-truth labels in inference file. Skipping evaluation metrics/plots.")
 
-    save_metrics_text(METRICS_OUTPUT_PATH, threshold, metrics)
-    print(f"Evaluation metrics saved to: {METRICS_OUTPUT_PATH}")
+    results_df.to_csv(PREDICTIONS_OUTPUT_PATH, index=False)
+    print(f"Predictions saved to: {PREDICTIONS_OUTPUT_PATH}")
 
-    cm = metrics["confusion_matrix"]
-    plt.figure(figsize=(10, 8))
-    sns.heatmap(
-        cm,
-        annot=True,
-        fmt="d",
-        cmap="Blues",
-        xticklabels=[0, 1],
-        yticklabels=[0, 1],
-        cbar_kws={"label": "Count"},
-    )
-    plt.title("Confusion Matrix - Ass5 Classification Model",
-              fontsize=16, fontweight="bold")
-    plt.ylabel("True Label", fontsize=12)
-    plt.xlabel("Predicted Label", fontsize=12)
 
-    tn, fp, fn, tp = cm.ravel()
-    stats_text = f"True Negatives: {tn}\nFalse Positives: {fp}\nFalse Negatives: {fn}\nTrue Positives: {tp}"
-    stats_text += f"\n\nAccuracy: {metrics['accuracy']:.4f}"
-    plt.text(
-        2.5,
-        0.5,
-        stats_text,
-        fontsize=10,
-        bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.5),
-        verticalalignment="center",
-    )
-
-    plt.tight_layout()
-    plt.savefig(CONFUSION_MATRIX_OUTPUT_PATH, dpi=300, bbox_inches="tight")
-    print(f"\nConfusion matrix plot saved to: {CONFUSION_MATRIX_OUTPUT_PATH}")
-
-    plt.figure(figsize=(10, 8))
-    cm_normalized = cm.astype("float") / cm.sum(axis=1)[:, np.newaxis]
-    sns.heatmap(
-        cm_normalized,
-        annot=True,
-        fmt=".2%",
-        cmap="Greens",
-        xticklabels=[0, 1],
-        yticklabels=[0, 1],
-        cbar_kws={"label": "Percentage"},
-    )
-    plt.title("Normalized Confusion Matrix - Ass5 Classification Model",
-              fontsize=16, fontweight="bold")
-    plt.ylabel("True Label", fontsize=12)
-    plt.xlabel("Predicted Label", fontsize=12)
-
-    plt.tight_layout()
-    plt.savefig(CONFUSION_MATRIX_NORMALIZED_OUTPUT_PATH,
-                dpi=300, bbox_inches="tight")
-    print(
-        f"Normalized confusion matrix plot saved to: {CONFUSION_MATRIX_NORMALIZED_OUTPUT_PATH}")
-else:
-    print("\nNo ground-truth labels found. Skipping metrics and plots.")
-
-results_df.to_csv(PREDICTIONS_OUTPUT_PATH, index=False)
-print(f"Predictions saved to: {PREDICTIONS_OUTPUT_PATH}")
-
-print("\n" + "=" * 60)
-print("Inference completed successfully!")
-print("=" * 60)
+if __name__ == "__main__":
+    main()

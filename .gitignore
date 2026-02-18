@@ -1,0 +1,16 @@
+# Virtual environments
+venv/
+.venv/
+
+# src cache
+src/__pycache__/
+
+# output_ass5 exclusions
+# Ignore everything in the directory
+output_ass5/*
+
+# Exceptions (do not ignore these specific files)
+!output_ass5/ass5_confusion_matrix.jpg
+!output_ass5/ass5_confusion_matrix_normalized.jpg
+!output_ass5/ass5_evaluation_metrics.txt
+!output_ass5/ass5_training_history.png
